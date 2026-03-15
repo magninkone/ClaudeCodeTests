@@ -4,13 +4,13 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CV–Job Matcher</title>
-  <link rel="stylesheet" href="style.css?v=5">
+  <link rel="stylesheet" href="style.css?v=6">
 </head>
 <body>
   <div class="container">
     <header>
       <h1>CV–Job Matcher</h1>
-      <p class="subtitle">Find the top 20 jobs that best match your CV</p>
+      <p class="subtitle">Find the top 20 matching jobs from Indeed and LinkedIn</p>
     </header>
 
     <form id="match-form" class="form">
@@ -44,9 +44,16 @@
         <span id="cache-meta"></span>
         <button id="refresh-btn" class="btn-refresh">Refresh job listings</button>
       </div>
-      <ul id="results-list" class="results-list"></ul>
+      <div id="results-indeed" class="source-section hidden">
+        <h2 class="source-heading"><span class="source-badge source-indeed">Indeed</span></h2>
+        <ul id="results-list-indeed" class="results-list"></ul>
+      </div>
+      <div id="results-linkedin" class="source-section hidden">
+        <h2 class="source-heading"><span class="source-badge source-linkedin">LinkedIn</span></h2>
+        <ul id="results-list-linkedin" class="results-list"></ul>
+      </div>
     </section>
   </div>
-  <script src="app.js?v=5"></script>
+  <script src="app.js?v=6"></script>
 </body>
 </html>

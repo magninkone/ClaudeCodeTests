@@ -26,7 +26,7 @@ from matcher import score_jobs
 
 _INDEED_MAX = int(os.getenv("APIFY_INDEED_MAX_RESULTS", "25"))
 _LINKEDIN_MAX = int(os.getenv("APIFY_LINKEDIN_MAX_RESULTS", "50"))
-_TOP_K = 20
+_TOP_K_PER_SOURCE = 20
 
 app = FastAPI(title="CV–Job Matcher", version="1.1.0")
 
@@ -202,17 +202,31 @@ async def api_jobs(req: JobsRequest):
     return response
 
 
+def _score_source(cv_text: str, source_jobs: list[Job]) -> list[tuple[Job, float]]:
+    """Score and return top _TOP_K_PER_SOURCE jobs for one source."""
+    with_desc = [j for j in source_jobs if j.description.strip()]
+    without_desc = [j for j in source_jobs if not j.description.strip()]
+    scored = score_jobs(cv_text, with_desc, top_k=_TOP_K_PER_SOURCE)
+    if len(scored) < _TOP_K_PER_SOURCE:
+        scored += [(j, 0.0) for j in without_desc[: _TOP_K_PER_SOURCE - len(scored)]]
+    return scored
+
+
 @app.post("/api/match")
 async def api_match(req: MatchRequest):
-    """Fetch (or return cached) jobs, rank by CV match, return top results."""
+    """Fetch (or return cached) jobs, rank by CV match, return top 20 per source."""
     if not req.location.strip():
         raise HTTPException(status_code=400, detail="Location is required.")
     keyword = req.job_title or ""
     jobs, info, warnings = await _get_jobs(keyword, req.location, force=req.force_refresh)
 
+    indeed_jobs = [j for j in jobs if j.source.lower() == "indeed"]
+    linkedin_jobs = [j for j in jobs if j.source.lower() == "linkedin"]
+
     if not jobs:
         return {
-            "results": [],
+            "indeed": [],
+            "linkedin": [],
             "warning": (
                 f"No job listings found for '{keyword} {req.location}'.".strip()
                 + " Try a different location or job title."
@@ -220,20 +234,18 @@ async def api_match(req: MatchRequest):
         }
 
     if not req.cv_text.strip():
-        return {
-            "results": [_job_to_dict(j, 0.0) for j in jobs[:_TOP_K]],
+        response: dict[str, Any] = {
+            "indeed": [_job_to_dict(j, 0.0) for j in indeed_jobs[:_TOP_K_PER_SOURCE]],
+            "linkedin": [_job_to_dict(j, 0.0) for j in linkedin_jobs[:_TOP_K_PER_SOURCE]],
             "cache_info": info,
         }
+        if warnings:
+            response["warning"] = " | ".join(warnings)
+        return response
 
-    jobs_with_desc = [j for j in jobs if j.description.strip()]
-    jobs_without_desc = [j for j in jobs if not j.description.strip()]
-
-    scored = score_jobs(req.cv_text, jobs_with_desc, top_k=_TOP_K)
-    if len(scored) < _TOP_K:
-        scored += [(j, 0.0) for j in jobs_without_desc[: _TOP_K - len(scored)]]
-
-    response: dict[str, Any] = {
-        "results": [_job_to_dict(j, s) for j, s in scored],
+    response = {
+        "indeed": [_job_to_dict(j, s) for j, s in _score_source(req.cv_text, indeed_jobs)],
+        "linkedin": [_job_to_dict(j, s) for j, s in _score_source(req.cv_text, linkedin_jobs)],
         "cache_info": info,
     }
     if warnings:

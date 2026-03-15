@@ -8,7 +8,10 @@
   const loading = document.getElementById('loading');
   const errorEl = document.getElementById('error');
   const resultsSection = document.getElementById('results-section');
-  const resultsList = document.getElementById('results-list');
+  const indeedSection = document.getElementById('results-indeed');
+  const linkedinSection = document.getElementById('results-linkedin');
+  const indeedList = document.getElementById('results-list-indeed');
+  const linkedinList = document.getElementById('results-list-linkedin');
   const cacheBar = document.getElementById('cache-bar');
   const cacheMeta = document.getElementById('cache-meta');
   const refreshBtn = document.getElementById('refresh-btn');
@@ -45,27 +48,44 @@
     cacheBar.classList.remove('hidden');
   }
 
-  function showResults(results) {
+  function renderJobCard(job) {
+    const li = document.createElement('li');
+    li.className = 'result-card';
+    const score = job.match_score != null ? job.match_score + '% match' : '';
+    let desc = (job.description || '').slice(0, 200);
+    if (job.description && job.description.length > 200) desc += '…';
+    li.innerHTML =
+      '<p class="title">' + escapeHtml(job.title || 'Untitled') + '</p>' +
+      '<p class="meta">' + escapeHtml(job.company || '') + (job.location ? ' · ' + escapeHtml(job.location) : '') + '</p>' +
+      (score ? '<span class="score">' + escapeHtml(score) + '</span>' : '') +
+      (desc ? '<p class="description">' + escapeHtml(desc) + '</p>' : '') +
+      (job.url ? '<a href="' + escapeAttr(job.url) + '" target="_blank" rel="noopener">Apply / View job</a>' : '');
+    return li;
+  }
+
+  function showResults(data) {
+    const indeedJobs = data.indeed || [];
+    const linkedinJobs = data.linkedin || [];
+
     resultsSection.classList.remove('hidden');
-    resultsList.innerHTML = '';
-    results.forEach(function (job) {
-      const li = document.createElement('li');
-      li.className = 'result-card';
-      const score = job.match_score != null ? job.match_score + '% match' : '';
-      let desc = (job.description || '').slice(0, 200);
-      if (job.description && job.description.length > 200) desc += '…';
-      const sourceLower = (job.source || '').toLowerCase();
-      const sourceBadge = job.source
-        ? '<span class="source-badge source-' + sourceLower + '">' + escapeHtml(job.source) + '</span>'
-        : '';
-      li.innerHTML =
-        '<p class="title">' + escapeHtml(job.title || 'Untitled') + sourceBadge + '</p>' +
-        '<p class="meta">' + escapeHtml(job.company || '') + (job.location ? ' · ' + escapeHtml(job.location) : '') + '</p>' +
-        (score ? '<span class="score">' + escapeHtml(score) + '</span>' : '') +
-        (desc ? '<p class="description">' + escapeHtml(desc) + '</p>' : '') +
-        (job.url ? '<a href="' + escapeAttr(job.url) + '" target="_blank" rel="noopener">Apply / View job</a>' : '');
-      resultsList.appendChild(li);
-    });
+
+    // Indeed section
+    indeedList.innerHTML = '';
+    if (indeedJobs.length > 0) {
+      indeedJobs.forEach(function (job) { indeedList.appendChild(renderJobCard(job)); });
+      indeedSection.classList.remove('hidden');
+    } else {
+      indeedSection.classList.add('hidden');
+    }
+
+    // LinkedIn section
+    linkedinList.innerHTML = '';
+    if (linkedinJobs.length > 0) {
+      linkedinJobs.forEach(function (job) { linkedinList.appendChild(renderJobCard(job)); });
+      linkedinSection.classList.remove('hidden');
+    } else {
+      linkedinSection.classList.add('hidden');
+    }
   }
 
   function escapeHtml(s) {
@@ -103,10 +123,11 @@
       if (data.warning) {
         showError(data.warning);
       }
-      if ((data.results || []).length === 0 && !data.warning) {
+      const total = (data.indeed || []).length + (data.linkedin || []).length;
+      if (total === 0 && !data.warning) {
         showError('No matching jobs found. Try a different location or job title.');
       }
-      showResults(data.results || []);
+      showResults(data);
       showCacheBar(data);
     } catch (err) {
       showError(err.message || 'Something went wrong.');

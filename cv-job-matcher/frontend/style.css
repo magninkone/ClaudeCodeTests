@@ -162,9 +162,20 @@ input::file-selector-button {
   background: rgba(88, 166, 255, 0.1);
 }
 
-.results-section h2 {
-  font-size: 1.25rem;
-  margin: 0 0 1rem 0;
+.source-section {
+  margin-bottom: 2.5rem;
+}
+
+.source-heading {
+  display: flex;
+  align-items: center;
+  margin: 0 0 0.85rem 0;
+}
+
+.source-heading .source-badge {
+  font-size: 0.9rem;
+  padding: 0.25rem 0.7rem;
+  margin-left: 0;
 }
 
 .results-list {
