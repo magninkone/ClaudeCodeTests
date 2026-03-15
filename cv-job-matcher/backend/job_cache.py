@@ -1,12 +1,12 @@
 """
 Job listing cache — persists fetched jobs to disk for 7 days.
 
-Jobs are cached per (keyword, location) pair so the same search
+Jobs are cached per (keyword, location, source) tuple so the same search
 reuses results across all CV matches that week, minimising API calls.
 
 Free tier budget: Apify gives $5/month.
-misceres/indeed-scraper costs $0.005/result.
-At 15 results/search, each unique search costs $0.075 → ~66 searches/month free.
+Pricing: Indeed $0.005/result, LinkedIn $0.001/result.
+At 25 Indeed + 50 LinkedIn per search: $0.175/search → ~28 unique searches/month free.
 """
 
 import hashlib
@@ -19,25 +19,29 @@ from job_sources import Job
 
 CACHE_DIR = Path(__file__).parent.parent / "cache"
 CACHE_TTL = timedelta(days=7)
-COST_PER_RESULT_USD = 0.005   # misceres/indeed-scraper pricing
 FREE_TIER_BUDGET_USD = 5.00
 
+COST_PER_RESULT = {
+    "indeed": 0.005,
+    "linkedin": 0.001,
+}
 
-def _cache_key(keyword: str, location: str) -> str:
-    raw = f"{keyword.lower().strip()}|{location.lower().strip()}"
+
+def _cache_key(keyword: str, location: str, source: str) -> str:
+    raw = f"{keyword.lower().strip()}|{location.lower().strip()}|{source.lower().strip()}"
     return hashlib.md5(raw.encode()).hexdigest()
 
 
-def _cache_path(keyword: str, location: str) -> Path:
-    return CACHE_DIR / f"{_cache_key(keyword, location)}.json"
+def _cache_path(keyword: str, location: str, source: str) -> Path:
+    return CACHE_DIR / f"{_cache_key(keyword, location, source)}.json"
 
 
-def get_cached_jobs(keyword: str, location: str, force: bool = False) -> Optional[list[Job]]:
+def get_cached_jobs(keyword: str, location: str, source: str, force: bool = False) -> Optional[list[Job]]:
     """Return cached jobs if present and not expired, else None.
     If force=True, ignore the cache and return None to trigger a fresh fetch."""
     if force:
         return None
-    path = _cache_path(keyword, location)
+    path = _cache_path(keyword, location, source)
     if not path.exists():
         return None
     try:
@@ -47,6 +51,7 @@ def get_cached_jobs(keyword: str, location: str, force: bool = False) -> Optiona
             fetched_at = fetched_at.replace(tzinfo=timezone.utc)
         if datetime.now(tz=timezone.utc) - fetched_at > CACHE_TTL:
             return None
+        cached_source = data.get("source", source)
         return [
             Job(
                 title=j["title"],
@@ -54,6 +59,7 @@ def get_cached_jobs(keyword: str, location: str, force: bool = False) -> Optiona
                 description=j["description"],
                 url=j["url"],
                 location=j["location"],
+                source=j.get("source", cached_source),
                 raw={},
             )
             for j in data["jobs"]
@@ -62,13 +68,14 @@ def get_cached_jobs(keyword: str, location: str, force: bool = False) -> Optiona
         return None
 
 
-def save_to_cache(keyword: str, location: str, jobs: list[Job]) -> None:
+def save_to_cache(keyword: str, location: str, source: str, jobs: list[Job]) -> None:
     """Persist jobs to disk cache."""
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    path = _cache_path(keyword, location)
+    path = _cache_path(keyword, location, source)
     payload = {
         "keyword": keyword,
         "location": location,
+        "source": source,
         "fetched_at": datetime.now(tz=timezone.utc).isoformat(),
         "jobs": [
             {
@@ -77,6 +84,7 @@ def save_to_cache(keyword: str, location: str, jobs: list[Job]) -> None:
                 "description": j.description,
                 "url": j.url,
                 "location": j.location,
+                "source": j.source,
             }
             for j in jobs
         ],
@@ -84,9 +92,9 @@ def save_to_cache(keyword: str, location: str, jobs: list[Job]) -> None:
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
-def cache_info(keyword: str, location: str) -> dict[str, Any]:
-    """Return cache status for a given query (for API responses)."""
-    path = _cache_path(keyword, location)
+def cache_info(keyword: str, location: str, source: str) -> dict[str, Any]:
+    """Return cache status for a given query and source (for API responses)."""
+    path = _cache_path(keyword, location, source)
     if not path.exists():
         return {"cached": False}
     try:
@@ -121,15 +129,18 @@ def all_cache_entries() -> list[dict[str, Any]]:
             age = now - fetched_at
             expired = age > CACHE_TTL
             job_count = len(data.get("jobs", []))
+            source = data.get("source", "indeed")
+            cost_per = COST_PER_RESULT.get(source.lower(), 0.005)
             entries.append({
                 "keyword": data.get("keyword", ""),
                 "location": data.get("location", ""),
+                "source": source,
                 "job_count": job_count,
                 "fetched_at": fetched_at.isoformat(),
                 "age_days": round(age.total_seconds() / 86400, 1),
                 "expires_in_days": round((CACHE_TTL - age).total_seconds() / 86400, 1) if not expired else 0,
                 "expired": expired,
-                "estimated_cost_usd": round(job_count * COST_PER_RESULT_USD, 3),
+                "estimated_cost_usd": round(job_count * cost_per, 3),
             })
         except Exception:
             continue
@@ -147,7 +158,7 @@ def monthly_usage() -> dict[str, Any]:
         if datetime.fromisoformat(e["fetched_at"]) >= month_start
     ]
     total_results = sum(e["job_count"] for e in this_month)
-    total_cost = round(total_results * COST_PER_RESULT_USD, 3)
+    total_cost = round(sum(e["estimated_cost_usd"] for e in this_month), 3)
     remaining_budget = round(FREE_TIER_BUDGET_USD - total_cost, 3)
 
     return {

@@ -226,3 +226,24 @@ input::file-selector-button {
 .result-card a:hover {
   text-decoration: underline;
 }
+
+.source-badge {
+  display: inline-block;
+  padding: 0.15rem 0.45rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  margin-left: 0.5rem;
+  vertical-align: middle;
+  letter-spacing: 0.02em;
+}
+
+.source-indeed {
+  background: rgba(255, 140, 0, 0.15);
+  color: #ff9f1a;
+}
+
+.source-linkedin {
+  background: rgba(10, 102, 194, 0.15);
+  color: #3b9eff;
+}

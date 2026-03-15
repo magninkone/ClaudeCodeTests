@@ -54,8 +54,12 @@
       const score = job.match_score != null ? job.match_score + '% match' : '';
       let desc = (job.description || '').slice(0, 200);
       if (job.description && job.description.length > 200) desc += '…';
+      const sourceLower = (job.source || '').toLowerCase();
+      const sourceBadge = job.source
+        ? '<span class="source-badge source-' + sourceLower + '">' + escapeHtml(job.source) + '</span>'
+        : '';
       li.innerHTML =
-        '<p class="title">' + escapeHtml(job.title || 'Untitled') + '</p>' +
+        '<p class="title">' + escapeHtml(job.title || 'Untitled') + sourceBadge + '</p>' +
         '<p class="meta">' + escapeHtml(job.company || '') + (job.location ? ' · ' + escapeHtml(job.location) : '') + '</p>' +
         (score ? '<span class="score">' + escapeHtml(score) + '</span>' : '') +
         (desc ? '<p class="description">' + escapeHtml(desc) + '</p>' : '') +

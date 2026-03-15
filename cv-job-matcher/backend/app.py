@@ -1,9 +1,10 @@
 """
 CV–Job Matcher API: parse CV, fetch jobs via Apify, rank by semantic match.
-Jobs are cached locally for 7 days to minimise Apify free-tier usage.
-Free tier: $5/month → ~66 searches at 15 results each (misceres/indeed-scraper).
+Jobs are cached locally per source for 7 days to minimise Apify free-tier usage.
+Free tier: $5/month → ~28 unique searches (25 Indeed + 50 LinkedIn = $0.175/search).
 """
 
+import asyncio
 import os
 from typing import Any, Optional
 
@@ -20,14 +21,14 @@ load_dotenv(os.path.join(_root, ".env"))
 
 from cv_parser import parse_cv
 from job_cache import all_cache_entries, cache_info, get_cached_jobs, monthly_usage, save_to_cache
-from job_sources import Job, fetch_jobs
+from job_sources import Job, fetch_indeed_jobs, fetch_linkedin_jobs
 from matcher import score_jobs
 
-# Max results per Apify call — keep low to conserve free-tier budget.
-# $0.005/result × 15 = $0.075/search → ~66 free searches/month.
-_MAX_RESULTS = int(os.getenv("APIFY_MAX_RESULTS", "15"))
+_INDEED_MAX = int(os.getenv("APIFY_INDEED_MAX_RESULTS", "25"))
+_LINKEDIN_MAX = int(os.getenv("APIFY_LINKEDIN_MAX_RESULTS", "50"))
+_TOP_K = 20
 
-app = FastAPI(title="CV–Job Matcher", version="1.0.0")
+app = FastAPI(title="CV–Job Matcher", version="1.1.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -65,40 +66,98 @@ def _job_to_dict(job: Job, score: Optional[float] = None) -> dict[str, Any]:
         "description": job.description,
         "url": job.url,
         "location": job.location,
+        "source": job.source,
     }
     if score is not None:
         d["match_score"] = round(score * 100, 1)
     return d
 
 
-def _get_jobs(keyword: str, location: str, force: bool = False) -> tuple[list[Job], bool]:
+def _deduplicate(jobs: list[Job]) -> list[Job]:
+    """Remove duplicate jobs by (title, company) — keep first occurrence."""
+    seen: set[tuple[str, str]] = set()
+    unique: list[Job] = []
+    for job in jobs:
+        key = (job.title.lower().strip(), job.company.lower().strip())
+        if key not in seen:
+            seen.add(key)
+            unique.append(job)
+    return unique
+
+
+async def _fetch_source(
+    fetch_fn,
+    keyword: str,
+    location: str,
+    source_name: str,
+    max_results: int,
+    force: bool,
+) -> tuple[list[Job], Optional[str]]:
     """
-    Return (jobs, from_cache). Checks cache first (unless force=True).
-    On cache miss, fetches from Apify and saves result.
-    Falls back to keyword-only search if location yields no results.
+    Fetch jobs for one source. Returns (jobs, error_message).
+    Checks cache first; on miss runs fetch_fn in a thread.
     """
-    jobs = get_cached_jobs(keyword, location, force=force)
-    if jobs is not None:
-        return jobs, True
+    cached = get_cached_jobs(keyword, location, source_name, force=force)
+    if cached is not None:
+        return cached, None
 
     try:
-        jobs = fetch_jobs(keyword, location, max_results=_MAX_RESULTS)
+        jobs = await asyncio.to_thread(fetch_fn, keyword, location, max_results=max_results)
     except ValueError as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return [], str(e)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Job fetch failed: {e}")
-
-    # Fallback: retry with keyword only if location yields nothing
-    if not jobs and location and keyword:
-        try:
-            jobs = fetch_jobs(keyword, "", max_results=_MAX_RESULTS)
-        except Exception:
-            jobs = []
+        return [], f"{source_name} fetch failed: {e}"
 
     if jobs:
-        save_to_cache(keyword, location, jobs)
+        save_to_cache(keyword, location, source_name, jobs)
+    return jobs, None
 
-    return jobs, False
+
+async def _get_jobs(
+    keyword: str, location: str, force: bool = False
+) -> tuple[list[Job], dict[str, Any], list[str]]:
+    """
+    Fetch Indeed and LinkedIn concurrently.
+    Returns (deduplicated_jobs, cache_info_dict, warnings).
+    """
+    indeed_task = _fetch_source(
+        fetch_indeed_jobs, keyword, location, "indeed", _INDEED_MAX, force
+    )
+    linkedin_task = _fetch_source(
+        fetch_linkedin_jobs, keyword, location, "linkedin", _LINKEDIN_MAX, force
+    )
+
+    (indeed_jobs, indeed_err), (linkedin_jobs, linkedin_err) = await asyncio.gather(
+        indeed_task, linkedin_task
+    )
+
+    warnings: list[str] = []
+    if indeed_err:
+        warnings.append(f"Indeed: {indeed_err}")
+    if linkedin_err:
+        warnings.append(f"LinkedIn: {linkedin_err}")
+
+    all_jobs = _deduplicate(indeed_jobs + linkedin_jobs)
+
+    info = {
+        "indeed": cache_info(keyword, location, "indeed"),
+        "linkedin": cache_info(keyword, location, "linkedin"),
+        # combined "cached" = both sources came from cache
+        "cached": (
+            cache_info(keyword, location, "indeed").get("cached", False)
+            and cache_info(keyword, location, "linkedin").get("cached", False)
+        ),
+        "age_days": max(
+            cache_info(keyword, location, "indeed").get("age_days", 0),
+            cache_info(keyword, location, "linkedin").get("age_days", 0),
+        ),
+        "expires_in_days": min(
+            cache_info(keyword, location, "indeed").get("expires_in_days", 0),
+            cache_info(keyword, location, "linkedin").get("expires_in_days", 0),
+        ),
+    }
+
+    return all_jobs, info, warnings
 
 
 @app.post("/api/parse-cv", response_model=ParseTextResponse)
@@ -129,24 +188,23 @@ async def api_parse_cv_json(body: ParseTextRequest):
 async def api_jobs(req: JobsRequest):
     """Fetch (or return cached) jobs for the given keyword and location."""
     keyword = req.job_title or ""
-    jobs, from_cache = _get_jobs(keyword, req.location)
-    if not jobs:
-        return {
-            "jobs": [],
-            "warning": f"No job listings found for '{keyword} {req.location}'.".strip(),
-        }
-    return {
+    jobs, info, warnings = await _get_jobs(keyword, req.location)
+    response: dict[str, Any] = {
         "jobs": [_job_to_dict(j) for j in jobs],
-        "from_cache": from_cache,
-        "cache_info": cache_info(keyword, req.location),
+        "cache_info": info,
     }
+    if not jobs:
+        response["warning"] = f"No job listings found for '{keyword} {req.location}'.".strip()
+    elif warnings:
+        response["warning"] = " | ".join(warnings)
+    return response
 
 
 @app.post("/api/match")
 async def api_match(req: MatchRequest):
     """Fetch (or return cached) jobs, rank by CV match, return top results."""
     keyword = req.job_title or ""
-    jobs, from_cache = _get_jobs(keyword, req.location, force=req.force_refresh)
+    jobs, info, warnings = await _get_jobs(keyword, req.location, force=req.force_refresh)
 
     if not jobs:
         return {
@@ -160,22 +218,23 @@ async def api_match(req: MatchRequest):
     if not req.cv_text.strip():
         return {
             "results": [_job_to_dict(j, 0.0) for j in jobs],
-            "from_cache": from_cache,
-            "cache_info": cache_info(keyword, req.location),
+            "cache_info": info,
         }
 
     jobs_with_desc = [j for j in jobs if j.description.strip()]
     jobs_without_desc = [j for j in jobs if not j.description.strip()]
 
-    scored = score_jobs(req.cv_text, jobs_with_desc, top_k=_MAX_RESULTS)
-    if len(scored) < _MAX_RESULTS:
-        scored += [(j, 0.0) for j in jobs_without_desc[: _MAX_RESULTS - len(scored)]]
+    scored = score_jobs(req.cv_text, jobs_with_desc, top_k=_TOP_K)
+    if len(scored) < _TOP_K:
+        scored += [(j, 0.0) for j in jobs_without_desc[: _TOP_K - len(scored)]]
 
-    return {
+    response: dict[str, Any] = {
         "results": [_job_to_dict(j, s) for j, s in scored],
-        "from_cache": from_cache,
-        "cache_info": cache_info(keyword, req.location),
+        "cache_info": info,
     }
+    if warnings:
+        response["warning"] = " | ".join(warnings)
+    return response
 
 
 @app.get("/api/cache/status")

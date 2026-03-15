@@ -1,8 +1,17 @@
-"""Apify-based job fetcher using Indeed Scraper (misceres/indeed-scraper)."""
+"""
+Apify-based job fetchers.
+
+Sources:
+  Indeed   — misceres/indeed-scraper         ($0.005/result, default 25 results)
+  LinkedIn — curious_coder/linkedin-jobs-scraper ($0.001/result, default 50 results)
+
+Actor IDs and result limits are configurable via environment variables.
+"""
 
 import os
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import quote
 
 from apify_client import ApifyClient
 
@@ -16,85 +25,94 @@ class Job:
     description: str
     url: str
     location: str
+    source: str   # "Indeed" or "LinkedIn"
     raw: dict[str, Any]
 
 
-def _get_client() -> tuple[ApifyClient, str]:
+def _get_client() -> ApifyClient:
     token = os.getenv("APIFY_API_TOKEN", "").strip()
-    actor_id = os.getenv("APIFY_ACTOR_ID", "misceres/indeed-scraper").strip()
     if not token:
         raise ValueError("APIFY_API_TOKEN is not set in environment")
-    return ApifyClient(token), actor_id
+    return ApifyClient(token)
 
 
-def _map_item(item: dict[str, Any]) -> Job:
-    """
-    Map Apify actor output item to Job model.
-    Handles field names from misceres/indeed-scraper and common alternatives.
-    """
-    title = (
-        item.get("positionName") or item.get("title") or item.get("job_title")
-        or item.get("jobTitle") or item.get("position") or ""
-    )
-    company = (
-        item.get("company") or item.get("company_name") or item.get("companyName")
-        or item.get("employer") or item.get("employer_name") or ""
-    )
-    description = (
-        item.get("description") or item.get("job_description") or item.get("jobDescription")
-        or item.get("descriptionText") or item.get("summary") or ""
-    )
-    url = (
-        item.get("url") or item.get("externalApplyLink") or item.get("link")
-        or item.get("jobUrl") or item.get("applyUrl") or item.get("apply_link") or ""
-    )
-    location = (
-        item.get("location") or item.get("job_location") or item.get("jobLocation")
-        or item.get("place") or item.get("city") or ""
-    )
+# ---------------------------------------------------------------------------
+# Indeed
+# ---------------------------------------------------------------------------
+
+def _map_indeed(item: dict[str, Any]) -> Job:
     return Job(
-        title=str(title).strip(),
-        company=str(company).strip(),
-        description=str(description).strip(),
-        url=str(url).strip(),
-        location=str(location).strip(),
+        title=str(item.get("positionName") or item.get("title") or "").strip(),
+        company=str(item.get("company") or item.get("companyName") or "").strip(),
+        description=str(item.get("description") or "").strip(),
+        url=str(item.get("url") or item.get("externalApplyLink") or "").strip(),
+        location=str(item.get("location") or "").strip(),
+        source="Indeed",
         raw=item,
     )
 
 
-def fetch_jobs(
-    keyword: str,
-    location: str,
-    *,
-    max_results: int = 20,
-) -> list[Job]:
+def fetch_indeed_jobs(keyword: str, location: str, *, max_results: int = 25) -> list[Job]:
     """
-    Fetch job listings via Apify actor.
-
-    keyword: job title or search terms (e.g. "Python Developer").
-    location: location string (e.g. "London", "New York"). Pass "" for any location.
-    max_results: maximum number of results to return.
-
-    Default actor: misceres/indeed-scraper
-    Override via APIFY_ACTOR_ID env var.
-
-    Input sent to actor:
-      { "position": keyword, "location": location, "maxItems": max_results,
-        "country": APIFY_COUNTRY (default "US") }
-
-    Output fields mapped: positionName→title, company, description, url, location.
+    Fetch jobs from Indeed via misceres/indeed-scraper.
+    Actor: https://apify.com/misceres/indeed-scraper
+    Pricing: $0.005/result.
     """
-    client, actor_id = _get_client()
+    actor_id = os.getenv("APIFY_INDEED_ACTOR_ID", "misceres/indeed-scraper").strip()
     country = os.getenv("APIFY_COUNTRY", "US").strip().upper()
+    client = _get_client()
 
-    run_input: dict[str, Any] = {
-        "position": keyword,
-        "location": location,
-        "maxItems": max_results,
-        "country": country,
-    }
-
-    run = client.actor(actor_id).call(run_input=run_input)
+    run = client.actor(actor_id).call(
+        run_input={
+            "position": keyword,
+            "location": location,
+            "maxItems": max_results,
+            "country": country,
+        }
+    )
     items = list(client.dataset(run["defaultDatasetId"]).iterate_items())
-    jobs = [_map_item(item) for item in items if isinstance(item, dict)]
-    return jobs[:max_results]
+    return [_map_indeed(i) for i in items if isinstance(i, dict)][:max_results]
+
+
+# ---------------------------------------------------------------------------
+# LinkedIn
+# ---------------------------------------------------------------------------
+
+def _map_linkedin(item: dict[str, Any]) -> Job:
+    return Job(
+        title=str(item.get("title") or item.get("positionName") or "").strip(),
+        company=str(item.get("companyName") or item.get("company") or "").strip(),
+        description=str(item.get("descriptionText") or item.get("description") or "").strip(),
+        url=str(item.get("link") or item.get("applyUrl") or "").strip(),
+        location=str(item.get("location") or "").strip(),
+        source="LinkedIn",
+        raw=item,
+    )
+
+
+def fetch_linkedin_jobs(keyword: str, location: str, *, max_results: int = 50) -> list[Job]:
+    """
+    Fetch jobs from LinkedIn via curious_coder/linkedin-jobs-scraper.
+    Actor: https://apify.com/curious_coder/linkedin-jobs-scraper
+    Pricing: $0.001/result.
+
+    The actor does not respect maxResults — it scrapes until timeout.
+    We cap the results by slicing the dataset after the run completes.
+    Timeout is configurable via APIFY_LINKEDIN_TIMEOUT_SECS (default 90).
+    """
+    actor_id = os.getenv("APIFY_LINKEDIN_ACTOR_ID", "curious_coder/linkedin-jobs-scraper").strip()
+    timeout_secs = int(os.getenv("APIFY_LINKEDIN_TIMEOUT_SECS", "90"))
+    client = _get_client()
+
+    search_url = (
+        "https://www.linkedin.com/jobs/search/"
+        f"?keywords={quote(keyword)}&location={quote(location)}"
+    )
+
+    run = client.actor(actor_id).call(
+        run_input={"urls": [search_url]},
+        timeout_secs=timeout_secs,
+        memory_mbytes=1024,
+    )
+    items = list(client.dataset(run["defaultDatasetId"]).iterate_items())
+    return [_map_linkedin(i) for i in items if isinstance(i, dict)][:max_results]
