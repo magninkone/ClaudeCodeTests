@@ -187,6 +187,8 @@ async def api_parse_cv_json(body: ParseTextRequest):
 @app.post("/api/jobs")
 async def api_jobs(req: JobsRequest):
     """Fetch (or return cached) jobs for the given keyword and location."""
+    if not req.location.strip():
+        raise HTTPException(status_code=400, detail="Location is required.")
     keyword = req.job_title or ""
     jobs, info, warnings = await _get_jobs(keyword, req.location)
     response: dict[str, Any] = {
@@ -203,6 +205,8 @@ async def api_jobs(req: JobsRequest):
 @app.post("/api/match")
 async def api_match(req: MatchRequest):
     """Fetch (or return cached) jobs, rank by CV match, return top results."""
+    if not req.location.strip():
+        raise HTTPException(status_code=400, detail="Location is required.")
     keyword = req.job_title or ""
     jobs, info, warnings = await _get_jobs(keyword, req.location, force=req.force_refresh)
 
@@ -217,7 +221,7 @@ async def api_match(req: MatchRequest):
 
     if not req.cv_text.strip():
         return {
-            "results": [_job_to_dict(j, 0.0) for j in jobs],
+            "results": [_job_to_dict(j, 0.0) for j in jobs[:_TOP_K]],
             "cache_info": info,
         }
 
