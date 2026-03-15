@@ -1,5 +1,6 @@
 """
-CV–Job Matcher API: parse CV, fetch jobs via JSearch, rank by semantic match.
+CV–Job Matcher API: parse CV, fetch jobs via Apify, rank by semantic match.
+Jobs are cached locally for 7 days to minimise API usage.
 """
 
 import os
@@ -17,6 +18,7 @@ _root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 load_dotenv(os.path.join(_root, ".env"))
 
 from cv_parser import parse_cv
+from job_cache import cache_info, get_cached_jobs, save_to_cache
 from job_sources import Job, fetch_jobs
 from matcher import score_jobs
 
@@ -63,6 +65,35 @@ def _job_to_dict(job: Job, score: Optional[float] = None) -> dict[str, Any]:
     return d
 
 
+def _get_jobs(keyword: str, location: str, max_results: int = 20) -> tuple[list[Job], bool]:
+    """
+    Return (jobs, from_cache). Checks cache first; fetches and caches on miss.
+    Falls back to keyword-only search if location yields no results.
+    """
+    jobs = get_cached_jobs(keyword, location)
+    if jobs is not None:
+        return jobs, True
+
+    try:
+        jobs = fetch_jobs(keyword, location, max_results=max_results)
+    except ValueError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Job fetch failed: {e}")
+
+    # Fallback: retry with keyword only if location yields nothing
+    if not jobs and location and keyword:
+        try:
+            jobs = fetch_jobs(keyword, "", max_results=max_results)
+        except Exception:
+            jobs = []
+
+    if jobs:
+        save_to_cache(keyword, location, jobs)
+
+    return jobs, False
+
+
 @app.post("/api/parse-cv", response_model=ParseTextResponse)
 async def api_parse_cv(
     file: Optional[UploadFile] = File(None),
@@ -89,62 +120,56 @@ async def api_parse_cv_json(body: ParseTextRequest):
 
 @app.post("/api/jobs")
 async def api_jobs(req: JobsRequest):
-    """Fetch jobs from JSearch for the given location and optional job title."""
-    query_parts = [req.job_title] if req.job_title else []
-    query_parts.append(req.location)
-    query = " ".join(p.strip() for p in query_parts if p and p.strip()) or req.location
-    try:
-        jobs = fetch_jobs(query, num_pages=3)
-        return {"jobs": [_job_to_dict(j) for j in jobs]}
-    except ValueError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Job search failed: {e}")
+    """Fetch (or return cached) jobs for the given keyword and location."""
+    keyword = req.job_title or ""
+    jobs, from_cache = _get_jobs(keyword, req.location)
+    if not jobs:
+        return {
+            "jobs": [],
+            "warning": f"No job listings found for '{keyword} {req.location}'.".strip(),
+        }
+    info = cache_info(keyword, req.location)
+    return {
+        "jobs": [_job_to_dict(j) for j in jobs],
+        "from_cache": from_cache,
+        "cache_info": info,
+    }
 
 
 @app.post("/api/match")
 async def api_match(req: MatchRequest):
-    """Fetch jobs from JSearch, rank by CV match, return top 20."""
-    query_parts = [req.job_title] if req.job_title else []
-    query_parts.append(req.location)
-    query = " ".join(p.strip() for p in query_parts if p and p.strip()) or req.location
-    try:
-        jobs = fetch_jobs(query, num_pages=2)
-    except ValueError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Job search failed: {e}")
-
-    # Fallback: if no results with location, try job title only (covers markets with limited JSearch coverage)
-    fallback_used = None
-    if not jobs and req.job_title:
-        fallback_used = req.job_title
-        try:
-            jobs = fetch_jobs(fallback_used, num_pages=2)
-        except Exception:
-            pass
+    """Fetch (or return cached) jobs, rank by CV match, return top 20."""
+    keyword = req.job_title or ""
+    jobs, from_cache = _get_jobs(keyword, req.location)
 
     if not jobs:
         return {
             "results": [],
-            "warning": f"No job listings found for '{query}'. JSearch primarily covers US/UK/English-language boards and may have limited coverage for this location.",
+            "warning": (
+                f"No job listings found for '{keyword} {req.location}'.".strip()
+                + " The Apify actor may have no coverage for this location, or the keyword returned no results."
+            ),
         }
 
-    # Only match against jobs that have a description; include description-less jobs after
+    if not req.cv_text.strip():
+        return {
+            "results": [_job_to_dict(j, 0.0) for j in jobs[:20]],
+            "from_cache": from_cache,
+        }
+
     jobs_with_desc = [j for j in jobs if j.description.strip()]
     jobs_without_desc = [j for j in jobs if not j.description.strip()]
 
-    if not req.cv_text.strip():
-        return {"results": [_job_to_dict(j, 0.0) for j in jobs[:20]]}
-
     scored = score_jobs(req.cv_text, jobs_with_desc, top_k=20)
-    # Append unscored jobs if top 20 not filled
     if len(scored) < 20:
         scored += [(j, 0.0) for j in jobs_without_desc[: 20 - len(scored)]]
+
+    info = cache_info(keyword, req.location)
     return {
         "results": [_job_to_dict(j, s) for j, s in scored],
+        "from_cache": from_cache,
+        "cache_info": info,
     }
-
 
 
 _frontend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend"))

@@ -19,6 +19,9 @@ env/
 *.swp
 *.swo
 
+# Job cache (weekly snapshots — do not commit)
+cache/
+
 # OS
 .DS_Store
 Thumbs.db
