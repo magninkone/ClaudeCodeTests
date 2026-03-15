@@ -1,4 +1,4 @@
-"""Apify-based job fetcher using LinkedIn Jobs Scraper."""
+"""Apify-based job fetcher using Indeed Scraper (misceres/indeed-scraper)."""
 
 import os
 from dataclasses import dataclass
@@ -21,17 +21,20 @@ class Job:
 
 def _get_client() -> tuple[ApifyClient, str]:
     token = os.getenv("APIFY_API_TOKEN", "").strip()
-    actor_id = os.getenv("APIFY_ACTOR_ID", "bebity/linkedin-jobs-scraper").strip()
+    actor_id = os.getenv("APIFY_ACTOR_ID", "misceres/indeed-scraper").strip()
     if not token:
         raise ValueError("APIFY_API_TOKEN is not set in environment")
     return ApifyClient(token), actor_id
 
 
 def _map_item(item: dict[str, Any]) -> Job:
-    """Map Apify actor output item to Job model, handling multiple field name conventions."""
+    """
+    Map Apify actor output item to Job model.
+    Handles field names from misceres/indeed-scraper and common alternatives.
+    """
     title = (
-        item.get("title") or item.get("job_title") or item.get("jobTitle")
-        or item.get("position") or ""
+        item.get("positionName") or item.get("title") or item.get("job_title")
+        or item.get("jobTitle") or item.get("position") or ""
     )
     company = (
         item.get("company") or item.get("company_name") or item.get("companyName")
@@ -42,7 +45,7 @@ def _map_item(item: dict[str, Any]) -> Job:
         or item.get("descriptionText") or item.get("summary") or ""
     )
     url = (
-        item.get("url") or item.get("link") or item.get("URL")
+        item.get("url") or item.get("externalApplyLink") or item.get("link")
         or item.get("jobUrl") or item.get("applyUrl") or item.get("apply_link") or ""
     )
     location = (
@@ -69,22 +72,26 @@ def fetch_jobs(
     Fetch job listings via Apify actor.
 
     keyword: job title or search terms (e.g. "Python Developer").
-    location: location string (e.g. "London", "Remote"). Pass "" for global/remote.
+    location: location string (e.g. "London", "New York"). Pass "" for any location.
     max_results: maximum number of results to return.
 
-    Default actor: bebity/linkedin-jobs-scraper
+    Default actor: misceres/indeed-scraper
     Override via APIFY_ACTOR_ID env var.
 
-    Expected actor input: { "keyword": str, "location": str, "pages": int }
-    Expected actor output items with fields: title, company, url, location,
-    description (field names vary by actor — _map_item handles common conventions).
+    Input sent to actor:
+      { "position": keyword, "location": location, "maxItems": max_results,
+        "country": APIFY_COUNTRY (default "US") }
+
+    Output fields mapped: positionName→title, company, description, url, location.
     """
     client, actor_id = _get_client()
+    country = os.getenv("APIFY_COUNTRY", "US").strip().upper()
 
     run_input: dict[str, Any] = {
-        "keyword": keyword,
+        "position": keyword,
         "location": location,
-        "pages": max(1, max_results // 10),
+        "maxItems": max_results,
+        "country": country,
     }
 
     run = client.actor(actor_id).call(run_input=run_input)
