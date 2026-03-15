@@ -8,7 +8,6 @@ from typing import Any, Optional
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -109,7 +108,6 @@ async def api_match(req: MatchRequest):
     query_parts = [req.job_title] if req.job_title else []
     query_parts.append(req.location)
     query = " ".join(p.strip() for p in query_parts if p and p.strip()) or req.location
-    print(f"[match] query={query!r} cv_text_len={len(req.cv_text)}", flush=True)
     try:
         jobs = fetch_jobs(query, num_pages=2)
     except ValueError as e:
@@ -121,7 +119,6 @@ async def api_match(req: MatchRequest):
     fallback_used = None
     if not jobs and req.job_title:
         fallback_used = req.job_title
-        print(f"[match] no results for {query!r}, retrying with job title only: {fallback_used!r}", flush=True)
         try:
             jobs = fetch_jobs(fallback_used, num_pages=2)
         except Exception:
@@ -133,7 +130,6 @@ async def api_match(req: MatchRequest):
             "warning": f"No job listings found for '{query}'. JSearch primarily covers US/UK/English-language boards and may have limited coverage for this location.",
         }
 
-    print(f"[match] fetched {len(jobs)} jobs (fallback={fallback_used!r})", flush=True)
     # Only match against jobs that have a description; include description-less jobs after
     jobs_with_desc = [j for j in jobs if j.description.strip()]
     jobs_without_desc = [j for j in jobs if not j.description.strip()]

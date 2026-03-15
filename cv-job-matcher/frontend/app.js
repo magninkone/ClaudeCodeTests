@@ -65,8 +65,6 @@
     e.preventDefault();
     hideError();
     resultsSection.classList.add('hidden');
-    console.log('[CVMatcher] form submitted');
-
     const location = locationInput.value.trim();
     if (!location) {
       showError('Please enter a location.');
@@ -76,7 +74,6 @@
     let cvTextValue = cvText.value.trim();
 
     if (cvFile.files && cvFile.files.length > 0) {
-      console.log('[CVMatcher] parsing CV file:', cvFile.files[0].name);
       showLoading(true);
       try {
         const formData = new FormData();
@@ -85,14 +82,12 @@
           method: 'POST',
           body: formData
         });
-        console.log('[CVMatcher] parse-cv status:', parseRes.status);
         if (!parseRes.ok) {
           const err = await parseRes.json().catch(() => ({ detail: parseRes.statusText }));
           throw new Error(err.detail || 'Failed to parse CV file');
         }
         const parsed = await parseRes.json();
         cvTextValue = parsed.text || '';
-        console.log('[CVMatcher] parsed CV text length:', cvTextValue.length);
       } catch (err) {
         showLoading(false);
         showError(err.message || 'Failed to parse CV.');
@@ -108,7 +103,6 @@
 
     showLoading(true);
     try {
-      console.log('[CVMatcher] calling /api/match, location:', location, 'job_title:', jobTitle.value.trim());
       const res = await fetch(API_BASE + '/api/match', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -118,12 +112,7 @@
           job_title: jobTitle.value.trim() || null
         })
       });
-      console.log('[CVMatcher] match status:', res.status);
-      const data = await res.json().catch(function (jsonErr) {
-        console.error('[CVMatcher] failed to parse match response JSON:', jsonErr);
-        return {};
-      });
-      console.log('[CVMatcher] results count:', (data.results || []).length);
+      const data = await res.json().catch(function () { return {}; });
       if (!res.ok) {
         throw new Error(data.detail || res.statusText || 'Request failed');
       }
@@ -135,7 +124,6 @@
       }
       showResults(data.results || []);
     } catch (err) {
-      console.error('[CVMatcher] error:', err);
       showError(err.message || 'Something went wrong.');
     } finally {
       showLoading(false);

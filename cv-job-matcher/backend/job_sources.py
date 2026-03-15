@@ -92,10 +92,8 @@ def fetch_jobs(
                 break
 
             # JSearch returns { "data": [ ... ] } or direct list
-            print(f"[jsearch] page={page+p} status={resp.status_code} top_keys={list(data.keys()) if isinstance(data, dict) else type(data)}", flush=True)
             items = data.get("data") if isinstance(data, dict) else data
             if not isinstance(items, list):
-                print(f"[jsearch] unexpected data type: {type(items)}, value: {str(data)[:200]}", flush=True)
                 break
             for item in items:
                 if isinstance(item, dict):
