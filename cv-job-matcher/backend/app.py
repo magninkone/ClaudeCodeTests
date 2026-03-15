@@ -20,6 +20,7 @@ _root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 load_dotenv(os.path.join(_root, ".env"))
 
 from cv_parser import parse_cv
+from cv_profiler import extract_profile
 from job_cache import all_cache_entries, cache_info, get_cached_jobs, monthly_usage, save_to_cache
 from job_sources import Job, fetch_indeed_jobs, fetch_linkedin_jobs
 from matcher import score_jobs
@@ -217,7 +218,22 @@ async def api_match(req: MatchRequest):
     """Fetch (or return cached) jobs, rank by CV match, return top 20 per source."""
     if not req.location.strip():
         raise HTTPException(status_code=400, detail="Location is required.")
-    keyword = req.job_title or ""
+
+    # Auto-extract job profile from CV when no job title is provided
+    extracted_profile: Optional[dict[str, str]] = None
+    if not req.job_title and req.cv_text.strip():
+        extracted_profile = await asyncio.to_thread(extract_profile, req.cv_text)
+        # Only use if extraction actually produced a title
+        if not extracted_profile.get("job_title"):
+            extracted_profile = None
+
+    keyword = req.job_title or (extracted_profile["job_title"] if extracted_profile else "")
+
+    # Augment CV text with extracted skills for better semantic matching
+    cv_text_for_matching = req.cv_text
+    if extracted_profile and extracted_profile.get("skills"):
+        cv_text_for_matching = req.cv_text + "\nKey skills: " + extracted_profile["skills"]
+
     jobs, info, warnings = await _get_jobs(keyword, req.location, force=req.force_refresh)
 
     indeed_jobs = [j for j in jobs if j.source.lower() == "indeed"]
@@ -244,10 +260,12 @@ async def api_match(req: MatchRequest):
         return response
 
     response = {
-        "indeed": [_job_to_dict(j, s) for j, s in _score_source(req.cv_text, indeed_jobs)],
-        "linkedin": [_job_to_dict(j, s) for j, s in _score_source(req.cv_text, linkedin_jobs)],
+        "indeed": [_job_to_dict(j, s) for j, s in _score_source(cv_text_for_matching, indeed_jobs)],
+        "linkedin": [_job_to_dict(j, s) for j, s in _score_source(cv_text_for_matching, linkedin_jobs)],
         "cache_info": info,
     }
+    if extracted_profile:
+        response["extracted_profile"] = extracted_profile
     if warnings:
         response["warning"] = " | ".join(warnings)
     return response

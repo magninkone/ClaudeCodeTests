@@ -132,6 +132,33 @@ input::file-selector-button {
   display: none !important;
 }
 
+.profile-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: rgba(88, 166, 255, 0.08);
+  border: 1px solid rgba(88, 166, 255, 0.25);
+  border-radius: 6px;
+  padding: 0.5rem 0.85rem;
+  margin-bottom: 1rem;
+  font-size: 0.85rem;
+  color: var(--text);
+}
+
+.profile-bar .profile-label {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.profile-bar .profile-title {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.profile-bar .profile-skills {
+  color: var(--muted);
+}
+
 .cache-bar {
   display: flex;
   align-items: center;

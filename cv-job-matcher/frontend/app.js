@@ -12,6 +12,8 @@
   const linkedinSection = document.getElementById('results-linkedin');
   const indeedList = document.getElementById('results-list-indeed');
   const linkedinList = document.getElementById('results-list-linkedin');
+  const profileBar = document.getElementById('profile-bar');
+  const profileMeta = document.getElementById('profile-meta');
   const cacheBar = document.getElementById('cache-bar');
   const cacheMeta = document.getElementById('cache-meta');
   const refreshBtn = document.getElementById('refresh-btn');
@@ -34,6 +36,19 @@
   function hideError() {
     errorEl.classList.add('hidden');
     errorEl.textContent = '';
+  }
+
+  function showProfileBar(data) {
+    const p = data.extracted_profile;
+    if (!p || (!p.job_title && !p.skills)) {
+      profileBar.classList.add('hidden');
+      return;
+    }
+    profileMeta.innerHTML =
+      '<span class="profile-label">Auto-detected profile · Searching for:</span> ' +
+      (p.job_title ? '<span class="profile-title">' + escapeHtml(p.job_title) + '</span>' : '') +
+      (p.skills ? ' <span class="profile-skills">· ' + escapeHtml(p.skills) + '</span>' : '');
+    profileBar.classList.remove('hidden');
   }
 
   function showCacheBar(data) {
@@ -104,6 +119,7 @@
 
   async function runMatch(cvTextValue, location, jobTitleValue, forceRefresh) {
     showLoading(true);
+    profileBar.classList.add('hidden');
     cacheBar.classList.add('hidden');
     try {
       const res = await fetch(API_BASE + '/api/match', {
@@ -128,6 +144,7 @@
         showError('No matching jobs found. Try a different location or job title.');
       }
       showResults(data);
+      showProfileBar(data);
       showCacheBar(data);
     } catch (err) {
       showError(err.message || 'Something went wrong.');
