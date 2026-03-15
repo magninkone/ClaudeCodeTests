@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CV–Job Matcher</title>
+  <link rel="stylesheet" href="style.css?v=2">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>CV–Job Matcher</h1>
+      <p class="subtitle">Find the top 20 jobs that best match your CV</p>
+    </header>
+
+    <form id="match-form" class="form">
+      <div class="field">
+        <label for="cv-file">CV (PDF or DOCX)</label>
+        <input type="file" id="cv-file" name="cv" accept=".pdf,.docx,.doc">
+      </div>
+      <div class="field">
+        <label for="cv-text">Or paste your CV text here</label>
+        <textarea id="cv-text" name="cv_text" rows="6" placeholder="Paste your CV content if you didn't upload a file..."></textarea>
+      </div>
+      <div class="field">
+        <label for="job-title">Job title or keywords (optional)</label>
+        <input type="text" id="job-title" name="job_title" placeholder="e.g. Software Engineer, Data Scientist">
+      </div>
+      <div class="field">
+        <label for="location">Location <span class="required">*</span></label>
+        <input type="text" id="location" name="location" required placeholder="e.g. London, Remote, New York">
+      </div>
+      <button type="submit" id="submit-btn" class="btn">Find my best jobs</button>
+    </form>
+
+    <div id="loading" class="loading hidden">
+      <p>Searching and ranking jobs… This may take a minute.</p>
+    </div>
+
+    <div id="error" class="error hidden"></div>
+
+    <section id="results-section" class="results-section hidden">
+      <h2>Top 20 matching jobs</h2>
+      <ul id="results-list" class="results-list"></ul>
+    </section>
+  </div>
+  <script src="app.js?v=3"></script>
+</body>
+</html>
