@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CV–Job Matcher</title>
-  <link rel="stylesheet" href="style.css?v=2">
+  <link rel="stylesheet" href="style.css?v=4">
 </head>
 <body>
   <div class="container">
@@ -40,10 +40,13 @@
     <div id="error" class="error hidden"></div>
 
     <section id="results-section" class="results-section hidden">
-      <h2>Top 20 matching jobs</h2>
+      <div id="cache-bar" class="cache-bar hidden">
+        <span id="cache-meta"></span>
+        <button id="refresh-btn" class="btn-refresh">Refresh job listings</button>
+      </div>
       <ul id="results-list" class="results-list"></ul>
     </section>
   </div>
-  <script src="app.js?v=3"></script>
+  <script src="app.js?v=4"></script>
 </body>
 </html>

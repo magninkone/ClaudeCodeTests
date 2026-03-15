@@ -9,9 +9,14 @@
   const errorEl = document.getElementById('error');
   const resultsSection = document.getElementById('results-section');
   const resultsList = document.getElementById('results-list');
+  const cacheBar = document.getElementById('cache-bar');
+  const cacheMeta = document.getElementById('cache-meta');
+  const refreshBtn = document.getElementById('refresh-btn');
 
-  // Base URL for API: same origin when frontend is served by backend, or set for dev
   const API_BASE = window.location.origin;
+
+  // Store last request so refresh can repeat it with force_refresh=true
+  let lastRequest = null;
 
   function showLoading(show) {
     loading.classList.toggle('hidden', !show);
@@ -26,6 +31,18 @@
   function hideError() {
     errorEl.classList.add('hidden');
     errorEl.textContent = '';
+  }
+
+  function showCacheBar(data) {
+    if (!data.cache_info || !data.cache_info.cached) {
+      cacheBar.classList.add('hidden');
+      return;
+    }
+    const info = data.cache_info;
+    cacheMeta.textContent =
+      'Cached data · fetched ' + info.age_days + ' day' + (info.age_days === 1 ? '' : 's') +
+      ' ago · refreshes in ' + info.expires_in_days + ' day' + (info.expires_in_days === 1 ? '' : 's');
+    cacheBar.classList.remove('hidden');
   }
 
   function showResults(results) {
@@ -61,10 +78,44 @@
     return div.innerHTML.replace(/"/g, '&quot;');
   }
 
+  async function runMatch(cvTextValue, location, jobTitleValue, forceRefresh) {
+    showLoading(true);
+    cacheBar.classList.add('hidden');
+    try {
+      const res = await fetch(API_BASE + '/api/match', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          cv_text: cvTextValue,
+          location: location,
+          job_title: jobTitleValue || null,
+          force_refresh: forceRefresh || false,
+        })
+      });
+      const data = await res.json().catch(function () { return {}; });
+      if (!res.ok) {
+        throw new Error(data.detail || res.statusText || 'Request failed');
+      }
+      if (data.warning) {
+        showError(data.warning);
+      }
+      if ((data.results || []).length === 0 && !data.warning) {
+        showError('No matching jobs found. Try a different location or job title.');
+      }
+      showResults(data.results || []);
+      showCacheBar(data);
+    } catch (err) {
+      showError(err.message || 'Something went wrong.');
+    } finally {
+      showLoading(false);
+    }
+  }
+
   form.addEventListener('submit', async function (e) {
     e.preventDefault();
     hideError();
     resultsSection.classList.add('hidden');
+
     const location = locationInput.value.trim();
     if (!location) {
       showError('Please enter a location.');
@@ -101,32 +152,15 @@
       return;
     }
 
-    showLoading(true);
-    try {
-      const res = await fetch(API_BASE + '/api/match', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          cv_text: cvTextValue,
-          location: location,
-          job_title: jobTitle.value.trim() || null
-        })
-      });
-      const data = await res.json().catch(function () { return {}; });
-      if (!res.ok) {
-        throw new Error(data.detail || res.statusText || 'Request failed');
-      }
-      if (data.warning) {
-        showError(data.warning);
-      }
-      if ((data.results || []).length === 0 && !data.warning) {
-        showError('No matching jobs found. Try a different location or job title.');
-      }
-      showResults(data.results || []);
-    } catch (err) {
-      showError(err.message || 'Something went wrong.');
-    } finally {
-      showLoading(false);
-    }
+    lastRequest = { cvTextValue, location, jobTitleValue: jobTitle.value.trim() };
+    await runMatch(cvTextValue, location, jobTitle.value.trim(), false);
   });
+
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', async function () {
+      if (!lastRequest) return;
+      hideError();
+      await runMatch(lastRequest.cvTextValue, lastRequest.location, lastRequest.jobTitleValue, true);
+    });
+  }
 })();
