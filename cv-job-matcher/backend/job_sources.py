@@ -36,6 +36,66 @@ def _get_client() -> ApifyClient:
     return ApifyClient(token)
 
 
+# Maps location keywords → ISO 3166-1 alpha-2 country codes for Indeed.
+_LOCATION_COUNTRY_MAP: dict[str, str] = {
+    # France
+    "france": "FR", "paris": "FR", "lyon": "FR", "marseille": "FR",
+    "toulouse": "FR", "nice": "FR", "bordeaux": "FR", "strasbourg": "FR",
+    "nantes": "FR", "montpellier": "FR", "rennes": "FR", "lille": "FR",
+    # United Kingdom
+    "uk": "GB", "united kingdom": "GB", "britain": "GB", "england": "GB",
+    "london": "GB", "manchester": "GB", "birmingham": "GB", "leeds": "GB",
+    "glasgow": "GB", "edinburgh": "GB", "bristol": "GB", "liverpool": "GB",
+    "sheffield": "GB", "cambridge": "GB", "oxford": "GB",
+    # Germany
+    "germany": "DE", "deutschland": "DE", "berlin": "DE", "munich": "DE",
+    "münchen": "DE", "hamburg": "DE", "frankfurt": "DE", "cologne": "DE",
+    "düsseldorf": "DE", "stuttgart": "DE", "dortmund": "DE",
+    # United States
+    "usa": "US", "united states": "US", "america": "US", "remote": "US",
+    "new york": "US", "los angeles": "US", "chicago": "US", "houston": "US",
+    "san francisco": "US", "seattle": "US", "boston": "US", "austin": "US",
+    "denver": "US", "atlanta": "US", "miami": "US",
+    # Canada
+    "canada": "CA", "toronto": "CA", "vancouver": "CA", "montreal": "CA",
+    "calgary": "CA", "ottawa": "CA",
+    # Australia
+    "australia": "AU", "sydney": "AU", "melbourne": "AU", "brisbane": "AU",
+    "perth": "AU", "adelaide": "AU",
+    # Netherlands
+    "netherlands": "NL", "holland": "NL", "amsterdam": "NL", "rotterdam": "NL",
+    "the hague": "NL", "utrecht": "NL",
+    # Spain
+    "spain": "ES", "madrid": "ES", "barcelona": "ES", "valencia": "ES",
+    "seville": "ES", "bilbao": "ES",
+    # Italy
+    "italy": "IT", "rome": "IT", "milan": "IT", "milano": "IT",
+    "turin": "IT", "naples": "IT",
+    # Belgium
+    "belgium": "BE", "brussels": "BE", "bruxelles": "BE", "antwerp": "BE",
+    # Switzerland
+    "switzerland": "CH", "zurich": "CH", "zürich": "CH", "geneva": "CH",
+    # Poland
+    "poland": "PL", "warsaw": "PL", "kraków": "PL", "krakow": "PL",
+    # India
+    "india": "IN", "bangalore": "IN", "bengaluru": "IN", "mumbai": "IN",
+    "delhi": "IN", "hyderabad": "IN", "chennai": "IN", "pune": "IN",
+    # Singapore
+    "singapore": "SG",
+    # Brazil
+    "brazil": "BR", "são paulo": "BR", "sao paulo": "BR", "rio": "BR",
+}
+
+
+def _country_from_location(location: str, default: str) -> str:
+    """Infer ISO country code from a free-text location string."""
+    loc = location.lower().strip()
+    for keyword, code in _LOCATION_COUNTRY_MAP.items():
+        if keyword in loc:
+            return code
+    return default
+
+
 # ---------------------------------------------------------------------------
 # Indeed
 # ---------------------------------------------------------------------------
@@ -59,7 +119,8 @@ def fetch_indeed_jobs(keyword: str, location: str, *, max_results: int = 25) -> 
     Pricing: $0.005/result.
     """
     actor_id = os.getenv("APIFY_INDEED_ACTOR_ID", "misceres/indeed-scraper").strip()
-    country = os.getenv("APIFY_COUNTRY", "US").strip().upper()
+    default_country = os.getenv("APIFY_COUNTRY", "US").strip().upper()
+    country = _country_from_location(location, default_country)
     client = _get_client()
 
     run = client.actor(actor_id).call(

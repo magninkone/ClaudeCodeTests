@@ -31,6 +31,7 @@
   function showError(message) {
     errorEl.textContent = message;
     errorEl.classList.remove('hidden');
+    errorEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 
   function hideError() {

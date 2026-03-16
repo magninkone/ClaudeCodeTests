@@ -21,6 +21,7 @@ env/
 
 # Job cache (weekly snapshots — do not commit)
 cache/
+job_cache/
 
 # OS
 .DS_Store
